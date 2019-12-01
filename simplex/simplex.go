@@ -1,5 +1,4 @@
-/* Package simplex
- * This code ported to Go from Stefan Gustavson's C implementation, his comments follow:
+/* This code ported to Go from Stefan Gustavson's C implementation, his comments follow:
  * https://github.com/stegu/perlin-noise/blob/master/src/simplexnoise1234.c
  * SimplexNoise1234, Simplex noise with true analytic
  * derivative in 1D to 4D.
@@ -28,6 +27,8 @@
  * This file has no dependencies on any other file, not even its own
  * header file. The header file is made for use by external code only.
  */
+
+// Package simplex implements simplex noise
 package simplex
 
 func fastFloor(x float32) int {
