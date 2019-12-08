@@ -164,8 +164,7 @@ func clamp(min, max, v int) int {
 	return v
 }
 
-// RescaleAndDraw scales the noise values by the given scale
-// and draws them to the pixels buffer
+// drawNoise draws noise to the pixels buffer
 func drawNoise(noise []float32, gradient []color, pixels []byte) {
 	for i := range noise {
 		c := gradient[clamp(0, 255, int(noise[i]))]
