@@ -5,12 +5,15 @@ import (
 	"image"
 	"image/png"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/dikaeinstein/games-with-go/noise"
+	"github.com/dikaeinstein/games-with-go/vector"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -18,32 +21,78 @@ type rgba struct {
 	r, g, b byte
 }
 
-type pos struct {
-	x, y float32
+type mouseState struct {
+	leftButton, rightButton bool
+	x, y                    int
+}
+
+func getMouseState() mouseState {
+	mouseX, mouseY, mouseButtonState := sdl.GetMouseState()
+	leftButton := mouseButtonState & sdl.ButtonLMask()
+	rightButton := mouseButtonState & sdl.ButtonRMask()
+	return mouseState{
+		!(leftButton == 0),
+		!(rightButton == 0),
+		int(mouseX),
+		int(mouseY)}
 }
 
 type balloon struct {
-	tex *sdl.Texture
-	pos
-	scale float32
-	w, h  int
+	tex           *sdl.Texture
+	pos, velocity vector.Vector
+	w, h          int
 }
 
 func (b *balloon) draw(renderer *sdl.Renderer) {
-	newWidth := int32(float32(b.w) * b.scale)
-	newHeight := int32(float32(b.h) * b.scale)
+	scale := (b.pos.Z/200 + 1) / 2
+	newWidth := int32(float32(b.w) * scale)
+	newHeight := int32(float32(b.h) * scale)
 
-	x := int32(b.x - float32(b.w)/2)
-	y := int32(b.y - float32(b.h)/2)
+	x := int32(b.pos.X - float32(b.w)/2)
+	y := int32(b.pos.Y - float32(b.h)/2)
 
 	rect := &sdl.Rect{X: x, Y: y, W: newWidth, H: newHeight}
 	renderer.Copy(b.tex, nil, rect)
 }
 
+func (b *balloon) update(elapsedTime float32) {
+	// compute the new position for the ballon based on its current postion,
+	// velocity and the elapsedTime for the previous frame
+	p := vector.Add(b.pos, vector.Multiply(b.velocity, elapsedTime))
+	if p.X < 0 || p.X > float32(winWidth) {
+		b.velocity.X = -b.velocity.X
+	}
+	if p.Y < 0 || p.Y > float32(winHeight) {
+		b.velocity.Y = -b.velocity.Y
+	}
+	if p.Z < 0 || p.Z > float32(winDepth) {
+		b.velocity.Z = -b.velocity.Z
+	}
+
+	b.pos = vector.Add(b.pos, vector.Multiply(b.velocity, elapsedTime))
+}
+
+type balloonSlice []*balloon
+
+func (bs balloonSlice) Len() int {
+	return len(bs)
+}
+
+func (bs balloonSlice) Swap(i, j int) {
+	bs[i], bs[j] = bs[j], bs[i]
+}
+
+func (bs balloonSlice) Less(i, j int) bool {
+	diff := bs[i].pos.Z - bs[j].pos.Z
+	return diff < -0.5
+}
+
 const winWidth = 800
 const winHeight = 600
+const winDepth = 100
 
 func main() {
+	sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
 	if err := sdl.Init(sdl.INIT_EVERYTHING); err != nil {
 		panic(err)
 	}
@@ -75,9 +124,10 @@ func main() {
 	cloudTexture := pixelsToTexture(renderer, cloudPixels, winWidth, winHeight)
 
 	imgs := loadImages("images", "balloon_")
-	balloons := loadBalloons(renderer, imgs)
+	balloons := loadBalloons(renderer, imgs, 10)
 
-	dir := 1
+	currentMouseState := getMouseState()
+	previousMouseState := currentMouseState
 	var elapsedTime float32
 	running := true
 	for running {
@@ -92,25 +142,35 @@ func main() {
 			}
 		}
 
+		currentMouseState = getMouseState()
+		if !currentMouseState.leftButton && previousMouseState.leftButton {
+			fmt.Println("left click")
+		}
+
+		if !currentMouseState.rightButton && previousMouseState.rightButton {
+			fmt.Println("right click")
+		}
+
 		renderer.Copy(cloudTexture, nil, nil)
 
 		for _, b := range balloons {
-			b.draw(renderer)
+			b.update(elapsedTime)
 		}
-
-		balloons[1].x += float32(1 * dir)
-		if balloons[1].x > 400 || balloons[1].x < 0 {
-			dir = dir * -1
+		sort.Sort(balloonSlice(balloons))
+		for _, b := range balloons {
+			b.draw(renderer)
 		}
 
 		renderer.Present()
 
 		elapsedTime = float32(time.Since(frameStart).Milliseconds())
-		fmt.Println("ms per frame", elapsedTime)
+		// fmt.Println("ms per frame", elapsedTime)
 		if elapsedTime < 5 {
 			sdl.Delay(5 - uint32(elapsedTime))
 			elapsedTime = float32(time.Since(frameStart).Milliseconds())
 		}
+
+		previousMouseState = currentMouseState
 	}
 }
 
@@ -163,8 +223,9 @@ func loadBalloonTexture(renderer *sdl.Renderer, img image.Image, w, h int) *sdl.
 	return pixelsToTexture(renderer, pixels, w, h)
 }
 
-func loadBalloons(renderer *sdl.Renderer, imgs []image.Image) []balloon {
-	balloons := make([]balloon, len(imgs))
+func loadBalloons(renderer *sdl.Renderer, imgs []image.Image, numOfBalloons int) []*balloon {
+	numOfImages := len(imgs)
+	balloonTextures := make([]*sdl.Texture, numOfImages)
 
 	for i, img := range imgs {
 		w := img.Bounds().Max.X
@@ -175,9 +236,28 @@ func loadBalloons(renderer *sdl.Renderer, imgs []image.Image) []balloon {
 			panic(err)
 		}
 
-		// v := float32(i * 120)
-		balloons[i] = balloon{tex,
-			pos{float32(i * 120), float32(i * 120)}, float32(1+i) / 2, w, h}
+		balloonTextures[i] = tex
+	}
+
+	balloons := make([]*balloon, numOfBalloons)
+	for i := range balloons {
+		// create equal no. of balloon textures
+		t := balloonTextures[i%numOfImages]
+		pos := vector.Vector{
+			X: rand.Float32() * float32(winWidth),
+			Y: rand.Float32() * float32(winHeight),
+			Z: rand.Float32() * float32(winDepth),
+		}
+		velocity := vector.Vector{
+			X: rand.Float32() * 0.5,
+			Y: rand.Float32() * 0.5,
+			Z: rand.Float32() * 0.5,
+		}
+		_, _, w, h, err := t.Query()
+		if err != nil {
+			panic(err)
+		}
+		balloons[i] = &balloon{t, pos, velocity, int(w), int(h)}
 	}
 	return balloons
 }
