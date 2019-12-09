@@ -50,7 +50,6 @@ func (p *Paddle) Update(keyboardStates []uint8, controllerAxis int16, elapsedTim
 	if keyboardStates[sdl.SCANCODE_DOWN] != 0 {
 		p.Y += p.speed * elapsedTime
 	}
-
 	if math.Abs(float64(controllerAxis)) > 1500 {
 		p.Y += p.speed * float32(controllerAxis) / 32767.0 * elapsedTime
 	}
